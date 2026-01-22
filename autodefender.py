@@ -1,58 +1,57 @@
-# AutoDefender - Rule Based Intrusion Detection System
-
-from collections import defaultdict
+import re
+import time
+from pathlib import Path
 
 # File paths
 AUTH_LOG = "logs/auth.log"
 WEB_LOG = "logs/web.log"
+ALERT_LOG = "output/alerts.log"
 BLOCKED_IPS_FILE = "output/blocked_ips.txt"
-ALERTS_FILE = "output/alerts.log"
 
-# Detection thresholds
-FAILED_LOGIN_THRESHOLD = 3
-SQLI_THRESHOLD = 2
+Path("output").mkdir(exist_ok=True)
 
-failed_login_count = defaultdict(int)
-sqli_count = defaultdict(int)
+# Load blocked IPs
 blocked_ips = set()
+if Path(BLOCKED_IPS_FILE).exists():
+    with open(BLOCKED_IPS_FILE, "r") as f:
+        for line in f:
+            blocked_ips.add(line.strip())
 
-def log_alert(message):
-    with open(ALERTS_FILE, "a") as alert:
-        alert.write(message + "\n")
+# Regex for IP address
+ip_pattern = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
 
 def block_ip(ip):
+    global blocked_ips
     if ip not in blocked_ips:
         blocked_ips.add(ip)
+
         with open(BLOCKED_IPS_FILE, "a") as f:
             f.write(ip + "\n")
-        log_alert(f"[ALERT] IP BLOCKED: {ip}")
 
-def analyze_auth_log():
-    with open(AUTH_LOG, "r") as file:
-        for line in file:
-            if "FAILED_LOGIN" in line:
-                ip = line.split("IP=")[1].split()[0]
-                failed_login_count[ip] += 1
+        with open(ALERT_LOG, "a") as f:
+            f.write(f"[ALERT] IP BLOCKED: {ip}\n")
 
-                if failed_login_count[ip] >= FAILED_LOGIN_THRESHOLD:
-                    block_ip(ip)
+        print(f"[+] BLOCKED IP: {ip}")
 
-def analyze_web_log():
-    with open(WEB_LOG, "r") as file:
-        for line in file:
-            if "OR '1'='1" in line:
-                ip = line.split("IP=")[1].split()[0]
-                sqli_count[ip] += 1
+def analyze_log(file_path, keywords):
+    if not Path(file_path).exists():
+        return
 
-                if sqli_count[ip] >= SQLI_THRESHOLD:
-                    block_ip(ip)
+    with open(file_path, "r") as log:
+        for line in log:
+            for keyword in keywords:
+                if keyword.lower() in line.lower():
+                    ips = ip_pattern.findall(line)
+                    for ip in ips:
+                        block_ip(ip)
 
 def main():
-    analyze_auth_log()
-    analyze_web_log()
+    print("[*] AutoDefender started...")
 
-    print("AutoDefender Scan Completed")
-    print(f"Total Blocked IPs: {len(blocked_ips)}")
+    while True:
+        analyze_log(AUTH_LOG, ["failed", "invalid", "error"])
+        analyze_log(WEB_LOG, ["scan", "nmap", "attack", "exploit"])
+        time.sleep(5)
 
 if __name__ == "__main__":
     main()
